@@ -165,5 +165,24 @@ else:
     st.info("Upload a receipt to generate the report.")
 
 # Footer
-st.markdown("---")
-st.markdown("Made with a lot of ☕ by Ibrahim Samir")
+def show_footer():
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style="text-align: center; padding-top: 20px;">
+            <a href="https://buymeacoffee.com/isamir" target="_blank">
+                <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 50px !important;width: 180px !important;" >
+            </a>
+            <p style="margin-top: 15px; color: #aaa; font-size: 0.9em;">
+                This tool is 100% free. If it saved you time, a coffee is always appreciated! ☕
+            </p>
+            <p style="color: #999; font-size: 0.8em;">
+                Made by Ibrahim Samir | <a href="https://takea5.com" target="_blank" style="color: #999; text-decoration: none;">Takea5.com</a>
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# Call it at the ends
+show_footer()
