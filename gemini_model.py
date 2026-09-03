@@ -150,16 +150,20 @@ def generate_content_with_fallback(
     client: Any,
     contents: Any,
     api_key: str | None = None,
+    config: Any = None,
 ) -> tuple[Any, str]:
     candidates = resolve_gemini_model_candidates(client, api_key)
     last_model_error: Exception | None = None
 
     for model_name in candidates:
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-            )
+            request = {
+                "model": model_name,
+                "contents": contents,
+            }
+            if config is not None:
+                request["config"] = config
+            response = client.models.generate_content(**request)
             return response, model_name
         except Exception as error:
             last_model_error = error
