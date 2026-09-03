@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from gemini_model import create_gemini_client, generate_content_with_fallback, get_response_text
 from PIL import Image
 import pandas as pd
 import json
@@ -22,18 +22,31 @@ if "expense_data" not in st.session_state:
     st.session_state.expense_data = []
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = set()
+if "last_model" not in st.session_state:
+    st.session_state.last_model = None
 
 # --- 2. LOGIC ---
+def _parse_json_response(response):
+    text = get_response_text(response)
+    cleaned = text.replace(chr(96) * 3 + "json", "").replace(chr(96) * 3, "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Be tolerant of a short explanatory prefix/suffix around the JSON.
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        return json.loads(cleaned[start : end + 1])
+
+
 def extract_receipt_data(image, api_key):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash-lite')
-    
-    # PROMPT UPDATE: Requesting "total" in summary explicitly
+    client = create_gemini_client(api_key)
+
     prompt = """
-    Analyze this receipt image. 
-    Step 1: Extract the "summary" details (Date, Vendor, Tax, Currency, Total Amount).
-    Step 2: Extract every single "line_item" (Product Name, Price).
-    
+    Analyze this receipt image.
+    Step 1: Extract the summary details (Date, Vendor, Tax, Currency, Total Amount).
+    Step 2: Extract every single line item (Product Name, Price).
+
     Return a valid JSON object with this exact structure:
     {
         "summary": {
@@ -48,14 +61,25 @@ def extract_receipt_data(image, api_key):
             {"name": "Item 2 Name", "price": 5.50, "category": "Food"}
         ]
     }
+
+    Return JSON only. Use null for values that are not visible.
     """
-    
+
     try:
-        response = model.generate_content([prompt, image])
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_text)
-    except Exception as e:
-        return {"error": str(e)}
+        response, model_name = generate_content_with_fallback(
+            client, [prompt, image], api_key
+        )
+        data = _parse_json_response(response)
+        if not isinstance(data, dict):
+            raise ValueError("Gemini returned a JSON value instead of an object.")
+        if not isinstance(data.get("summary", {}), dict):
+            raise ValueError("Gemini returned an invalid receipt summary.")
+        if not isinstance(data.get("items", []), list):
+            raise ValueError("Gemini returned invalid receipt items.")
+        return data, model_name
+    except Exception as error:
+        return {"error": str(error)}
+
 
 # --- 3. UI LAYOUT ---
 st.title("🧾 Receipt Ripper V3")
@@ -77,7 +101,7 @@ with st.sidebar:
 uploaded_file = st.file_uploader("Upload Receipt", type=["jpg", "png", "jpeg", "webp"])
 
 if uploaded_file and api_key:
-    file_id = uploaded_file.file_id
+    file_id = getattr(uploaded_file, "file_id", None) or f"{uploaded_file.name}:{uploaded_file.size}"
     
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -90,6 +114,9 @@ if uploaded_file and api_key:
         if st.button(btn_label, type="primary", disabled=btn_disabled):
             with st.spinner("Analyzing receipt..."):
                 raw_data = extract_receipt_data(image, api_key)
+                if isinstance(raw_data, tuple):
+                    raw_data, model_name = raw_data
+                    st.session_state.last_model = model_name
                 
                 if "error" in raw_data:
                     st.error(f"Error: {raw_data['error']}")
@@ -111,12 +138,16 @@ if uploaded_file and api_key:
                     
                     # 2. Add Tax Line (if > 0)
                     tax_val = summary.get("tax", 0)
-                    if tax_val and float(tax_val) > 0:
+                    try:
+                        tax_amount = float(tax_val or 0)
+                    except (TypeError, ValueError):
+                        tax_amount = 0.0
+                    if tax_amount > 0:
                         tax_row = {
                             "date": summary.get("date"),
                             "vendor": summary.get("vendor"),
                             "item_name": "Tax",
-                            "price": tax_val,
+                            "price": tax_amount,
                             "currency": summary.get("currency"),
                             "category": "Tax"
                         }
@@ -139,6 +170,8 @@ if uploaded_file and api_key:
 
 # --- 4. RESULTS TABLE ---
 st.markdown("### 📊 Detailed Item Log")
+if st.session_state.last_model:
+    st.caption(f"Last model used: {st.session_state.last_model}")
 
 if len(st.session_state.expense_data) > 0:
     df = pd.DataFrame(st.session_state.expense_data)
@@ -157,12 +190,16 @@ if len(st.session_state.expense_data) > 0:
             "category": st.column_config.SelectboxColumn("Category", options=["Food", "Transport", "Office", "Utilities", "Tech", "Tax", "Total"])
         }
     )
+    st.session_state.expense_data = edited_df.to_dict("records")
     
     csv = edited_df.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download CSV", csv, "receipt_complete.csv", "text/csv", type="primary")
 
 else:
-    st.info("Upload a receipt to generate the report.")
+    if uploaded_file and not api_key:
+        st.warning("Add a Gemini API key in the sidebar to scan this receipt.")
+    else:
+        st.info("Upload a receipt to generate the report.")
 
 # Footer
 def show_footer():
