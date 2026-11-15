@@ -181,7 +181,11 @@ def choose_receipt(digest):
 api_key = get_configured_api_key()
 receipts = st.session_state.setdefault("receipts", {})
 
-tool_header("Receipt Ripper", "Scan a receipt, correct the extracted details, and export a spreadsheet-ready record.")
+tool_header(
+    "Receipt Ripper",
+    "Scan a receipt, correct the extracted details, and export a spreadsheet-ready record.",
+    "استخرج بيانات الفاتورة من صورتها، ثم راجع البنود والإجماليات ونزّلها في ملفَي CSV منفصلين.",
+)
 
 with st.container(border=True):
     uploaded_file = st.file_uploader("Receipt image", type=["jpg", "png", "jpeg", "webp"])
